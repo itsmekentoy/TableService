@@ -39,9 +39,11 @@ export default function MenuPage() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [cart, setCart] = useState({});
   const [screensaver, setScreensaver] = useState(false);
+  const [showBillout, setShowBillout] = useState(false);
+  const [orderPlaced, setOrderPlaced] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
-  const idleTimer = useRef(null);
-  const slideTimer = useRef(null);
+  const idleTimer = useRef<NodeJS.Timeout>();
+  const slideTimer = useRef<NodeJS.Timeout>();
 
   const resetIdle = useCallback(() => {
     clearTimeout(idleTimer.current);
@@ -102,11 +104,9 @@ export default function MenuPage() {
     resetIdle();
   };
 
-  const checkout = () => {
-    alert("🎉 Order placed! Your food is being prepared.\n\nEstimated delivery: 25-35 minutes.");
-    setCart({});
-    resetIdle();
-  };
+  const openBillout = () => { setShowBillout(true); resetIdle(); };
+  const confirmOrder = () => { setOrderPlaced(true); setTimeout(() => { setOrderPlaced(false); setShowBillout(false); setCart({}); }, 2500); };
+  const checkout = () => { openBillout(); };
 
   const filteredItems = activeCategory === "all" ? menuItems : menuItems.filter((m) => m.cat === activeCategory);
   const cartEntries = Object.values(cart);
@@ -349,10 +349,125 @@ export default function MenuPage() {
               >
                 Place Order →
               </button>
+
+              {/* BILL OUT BUTTON */}
+              <button
+                onClick={cartEntries.length > 0 ? openBillout : undefined}
+                disabled={cartEntries.length === 0}
+                style={{
+                  width: "100%",
+                  background: cartEntries.length > 0 ? "#fff" : "#F9FAFB",
+                  color: cartEntries.length > 0 ? "#EA580C" : "#9CA3AF",
+                  border: cartEntries.length > 0 ? "2px solid #F97316" : "2px solid #E5E7EB",
+                  padding: "12px 14px", borderRadius: 12,
+                  fontFamily: "Syne", fontWeight: 700, fontSize: 15,
+                  cursor: cartEntries.length > 0 ? "pointer" : "default",
+                  marginTop: "0.6rem", letterSpacing: "0.5px",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                🧾 Bill Out
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* BILL OUT MODAL */}
+      {showBillout && (
+        <div
+          onClick={() => !orderPlaced && setShowBillout(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 2000, background: "rgba(28,10,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff", borderRadius: 24, width: "100%", maxWidth: 480,
+              overflow: "hidden", boxShadow: "0 24px 64px rgba(249,115,22,0.2)",
+            }}
+          >
+            {orderPlaced ? (
+              <div style={{ padding: "3rem 2rem", textAlign: "center" }}>
+                <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>🎉</div>
+                <div style={{ fontFamily: "Syne", fontWeight: 800, fontSize: "1.5rem", color: "#EA580C", marginBottom: 8 }}>Order Confirmed!</div>
+                <div style={{ color: "#9A6046", fontSize: 14 }}>Your food is being prepared. Est. delivery: 25–35 mins.</div>
+              </div>
+            ) : (
+              <>
+                {/* Modal Header */}
+                <div style={{ background: "linear-gradient(135deg,#F97316,#EA580C)", padding: "1.5rem 2rem", color: "#fff" }}>
+                  <div style={{ fontFamily: "Syne", fontWeight: 800, fontSize: "1.4rem", marginBottom: 4 }}>🧾 Your Bill</div>
+                  <div style={{ fontSize: 13, opacity: 0.85 }}>Review your order before checkout</div>
+                </div>
+
+                {/* Bill Items */}
+                <div style={{ padding: "1.25rem 2rem", maxHeight: 320, overflowY: "auto" }}>
+                  {cartEntries.map(({ item, qty }) => (
+                    <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px dashed #FDE8D8" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: "1.4rem" }}>{item.icon}</span>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: "#1C0A00" }}>{item.name}</div>
+                          <div style={{ fontSize: 11, color: "#9A6046" }}>x{qty} × ${item.price.toFixed(2)}</div>
+                        </div>
+                      </div>
+                      <div style={{ fontFamily: "Syne", fontWeight: 700, color: "#EA580C", fontSize: 14 }}>
+                        ${(item.price * qty).toFixed(2)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Bill Totals */}
+                <div style={{ margin: "0 2rem", background: "#FFFBF5", borderRadius: 12, padding: "1rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#9A6046", marginBottom: 8 }}>
+                    <span>Subtotal</span><span style={{ fontWeight: 600, color: "#1C0A00" }}>${subtotal.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#9A6046", marginBottom: 8 }}>
+                    <span>Delivery Fee</span><span style={{ fontWeight: 600, color: "#1C0A00" }}>$2.50</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#9A6046", marginBottom: 12 }}>
+                    <span>Tax (8%)</span><span style={{ fontWeight: 600, color: "#1C0A00" }}>${(subtotal * 0.08).toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "Syne", fontWeight: 800, fontSize: "1.2rem", paddingTop: 10, borderTop: "2px dashed #F97316" }}>
+                    <span>Grand Total</span>
+                    <span style={{ color: "#EA580C" }}>${(subtotal + 2.5 + subtotal * 0.08).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Modal Buttons */}
+                <div style={{ padding: "1.25rem 2rem 1.75rem", display: "flex", gap: 10 }}>
+                  <button
+                    onClick={() => setShowBillout(false)}
+                    style={{
+                      flex: 1, background: "#fff", color: "#9A6046", border: "1.5px solid #F3D5BE",
+                      padding: "12px", borderRadius: 12, fontFamily: "Syne", fontWeight: 700,
+                      fontSize: 14, cursor: "pointer",
+                    }}
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    onClick={confirmOrder}
+                    style={{
+                      flex: 2, background: "linear-gradient(135deg,#F97316,#EA580C)", color: "#fff",
+                      border: "none", padding: "12px", borderRadius: 12,
+                      fontFamily: "Syne", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                      letterSpacing: "0.5px",
+                    }}
+                  >
+                    ✅ Confirm & Pay ${(subtotal + 2.5 + subtotal * 0.08).toFixed(2)}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
