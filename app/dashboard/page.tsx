@@ -1,12 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback, Suspense } from "react";
-
-// ─── Mock: In production, replace this with a shared store / API / WebSocket ──
-// We simulate receiving orders via localStorage so both pages can share state.
-// On the menu page, after placeOrder(), also call:
-//   localStorage.setItem("zestbite_tables", JSON.stringify(tables))
-// This dashboard reads from that key and polls every 3s.
-// ─────────────────────────────────────────────────────────────────────────────
+import { useState, useEffect, useRef, Suspense } from "react";
 
 const TAX_RATE = 0.08;
 const TABLES = ["Table 1","Table 2","Table 3","Table 4","Table 5","Table 6","Table 7","Table 8","Takeaway"];
@@ -18,30 +11,32 @@ type TableData = { orders: OrderBatch[] };
 type TablesState = Record<string, TableData>;
 
 const calcSubtotal = (orders: { items: { price: number; qty: number }[] }[]) =>
-  orders.reduce((s, b) => s + b.items.reduce((bs: number, i: { price: number; qty: number; }) => bs + i.price * i.qty, 0), 0);
+  orders.reduce((s, b) => s + b.items.reduce((bs: number, i: { price: number; qty: number }) => bs + i.price * i.qty, 0), 0);
 
 const STATUS_COLORS: Record<OrderStatus, { bg: string; border: string; text: string; dot: string }> = {
-  new:        { bg: "#FEF3C7", border: "#F59E0B", text: "#92400E", dot: "#F59E0B" },
-  preparing:  { bg: "#DBEAFE", border: "#3B82F6", text: "#1E3A8A", dot: "#3B82F6" },
-  ready:      { bg: "#D1FAE5", border: "#10B981", text: "#065F46", dot: "#10B981" },
-  served:     { bg: "#F3F4F6", border: "#9CA3AF", text: "#4B5563", dot: "#9CA3AF" },
+  new:       { bg: "#FEF3C7", border: "#F59E0B", text: "#92400E", dot: "#F59E0B" },
+  preparing: { bg: "#DBEAFE", border: "#3B82F6", text: "#1E3A8A", dot: "#3B82F6" },
+  ready:     { bg: "#D1FAE5", border: "#10B981", text: "#065F46", dot: "#10B981" },
+  served:    { bg: "#F3F4F6", border: "#9CA3AF", text: "#4B5563", dot: "#9CA3AF" },
 };
 
-const STATUS_LABELS: Record<OrderStatus, string> = { new: "New Order", preparing: "Preparing", ready: "Ready", served: "Served" };
+const STATUS_LABELS: Record<OrderStatus, string> = {
+  new: "New Order", preparing: "Preparing", ready: "Ready", served: "Served",
+};
 
 const createDemoTables = (): TablesState => ({
   "Table 1": {
     orders: [
-      { batchId: 1001, time: "12:05", status: "served",
+      { batchId: 1001, time: "12:05 AM", status: "served",
         items: [{ id:1, name:"Flame Stack Burger", icon:"🍔", price:13.9, qty:2 },
                 { id:9, name:"Mango Lassi", icon:"🥭", price:5.5, qty:2 }] },
-      { batchId: 1002, time: "12:38", status: "new",
+      { batchId: 1002, time: "12:38 AM", status: "new",
         items: [{ id:11, name:"Churro Sundae", icon:"🍮", price:8.5, qty:2 }] },
     ],
   },
   "Table 3": {
     orders: [
-      { batchId: 2001, time: "12:20", status: "preparing",
+      { batchId: 2001, time: "12:20 AM", status: "preparing",
         items: [{ id:3, name:"Margherita Classica", icon:"🍕", price:14.0, qty:1 },
                 { id:4, name:"Pepperoni Inferno", icon:"🔥", price:15.5, qty:1 },
                 { id:10, name:"Yuzu Lemonade", icon:"🍋", price:4.9, qty:2 }] },
@@ -49,77 +44,80 @@ const createDemoTables = (): TablesState => ({
   },
   "Table 5": {
     orders: [
-      { batchId: 3001, time: "12:45", status: "new",
+      { batchId: 3001, time: "12:45 AM", status: "new",
         items: [{ id:5, name:"Salmon Aburi Roll", icon:"🍣", price:16.9, qty:2 },
                 { id:6, name:"Dragon Roll", icon:"🐉", price:18.0, qty:1 }] },
     ],
   },
   "Table 7": {
     orders: [
-      { batchId: 4001, time: "11:50", status: "ready",
+      { batchId: 4001, time: "11:50 AM", status: "ready",
         items: [{ id:7, name:"Al Pastor Tacos", icon:"🌮", price:10.5, qty:3 },
                 { id:8, name:"Baja Fish Tacos", icon:"🐟", price:11.5, qty:2 }] },
     ],
   },
   "Takeaway": {
     orders: [
-      { batchId: 5001, time: "12:55", status: "new",
+      { batchId: 5001, time: "12:55 AM", status: "new",
         items: [{ id:2, name:"Crispy Chicken Burger", icon:"🍗", price:12.5, qty:1 },
                 { id:12, name:"Mochi Trio", icon:"🍡", price:7.9, qty:1 }] },
     ],
   },
 });
 
+// ─── KEY FIX: All localStorage access is deferred to useEffect (client-only) ─
+
 function DashboardPage() {
-  // tables: { [tableName]: { orders: [{batchId, time, items, status}] } }
-  const [tables, setTables] = useState<TablesState>(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("zestbite_tables");
-      if (stored) {
-        try { return JSON.parse(stored) as TablesState; } catch {}
-      }
-    }
-    return createDemoTables();
-  });
+  const [mounted, setMounted] = useState(false);
+  const [tables, setTables] = useState<TablesState>({});
   const [seenBatches, setSeenBatches] = useState<Set<number>>(new Set());
-  const [newBadges, setNewBadges] = useState<Record<string, number>>({}); // { [tableName]: count }
+  const [newBadges, setNewBadges] = useState<Record<string, number>>({});
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [selectedBatch, setSelectedBatch] = useState<number | null>(null); // for detail modal
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Seed demo data on first load so the dashboard isn't empty ──────────────
+  // ── STEP 1: Mount + load from localStorage (client-only, no SSR) ──────────
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!localStorage.getItem("zestbite_tables")) {
-      localStorage.setItem("zestbite_tables", JSON.stringify(tables));
+    const stored = localStorage.getItem("zestbite_tables");
+    if (stored) {
+      try {
+        setTables(JSON.parse(stored) as TablesState);
+      } catch {
+        setTables(createDemoTables());
+        localStorage.setItem("zestbite_tables", JSON.stringify(createDemoTables()));
+      }
+    } else {
+      const demo = createDemoTables();
+      setTables(demo);
+      localStorage.setItem("zestbite_tables", JSON.stringify(demo));
     }
-  }, [tables]);
+    setMounted(true);
+  }, []);
 
-  // ── Poll localStorage every 3s for updates from menu page ─────────────────
+  // ── STEP 2: Poll localStorage every 3s for new orders from menu page ──────
   useEffect(() => {
+    if (!mounted) return;
     pollRef.current = setInterval(() => {
       const stored = localStorage.getItem("zestbite_tables");
       if (!stored) return;
       try {
         const incoming = JSON.parse(stored) as TablesState;
-        setTables((prev: TablesState) => {
-          // Detect new batches
+        setTables((prev) => {
           const newBadgeUpdates: Record<string, number> = {};
           Object.entries(incoming).forEach(([tName, tData]) => {
             tData.orders.forEach((batch) => {
-              if (!seenBatches.has(batch.batchId) && (!prev[tName] || !prev[tName].orders.find(b => b.batchId === batch.batchId))) {
+              const alreadyExists = prev[tName]?.orders.some(b => b.batchId === batch.batchId);
+              if (!seenBatches.has(batch.batchId) && !alreadyExists) {
                 newBadgeUpdates[tName] = (newBadgeUpdates[tName] || 0) + 1;
               }
             });
           });
           if (Object.keys(newBadgeUpdates).length > 0) {
             setNewBadges((b) => {
-              const next: Record<string, number> = { ...(b as Record<string, number>) };
+              const next = { ...b };
               Object.entries(newBadgeUpdates).forEach(([t, c]) => { next[t] = (next[t] || 0) + c; });
               return next;
             });
           }
-          // Merge: keep existing statuses, add new batches with status "new"
           const merged = { ...prev };
           Object.entries(incoming).forEach(([tName, tData]) => {
             const existing = merged[tName] || { orders: [] };
@@ -135,12 +133,8 @@ function DashboardPage() {
         });
       } catch {}
     }, 3000);
-    return () => {
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current);
-      }
-    };
-  }, [seenBatches]);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [mounted, seenBatches]);
 
   const clearBadge = (tableName: string) => {
     setNewBadges((prev) => { const n = { ...prev }; delete n[tableName]; return n; });
@@ -155,33 +149,44 @@ function DashboardPage() {
   };
 
   const updateBatchStatus = (tableName: string, batchId: number, status: OrderStatus) => {
-    setTables((prev) => ({
-      ...prev,
-      [tableName]: {
-        orders: prev[tableName].orders.map(b => b.batchId === batchId ? { ...b, status } : b),
-      },
-    }));
+    setTables((prev) => {
+      const updated = {
+        ...prev,
+        [tableName]: {
+          orders: prev[tableName].orders.map(b => b.batchId === batchId ? { ...b, status } : b),
+        },
+      };
+      localStorage.setItem("zestbite_tables", JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const billOutTable = (tableName: string) => {
-    setTables((prev) => { const n = { ...prev }; delete n[tableName]; return n; });
+    setTables((prev) => {
+      const n = { ...prev };
+      delete n[tableName];
+      localStorage.setItem("zestbite_tables", JSON.stringify(n));
+      return n;
+    });
     setNewBadges((prev) => { const n = { ...prev }; delete n[tableName]; return n; });
     if (selectedTable === tableName) setSelectedTable(null);
-    // sync back
-    setTimeout(() => {
-      const updated = { ...tables };
-      delete updated[tableName];
-      localStorage.setItem("zestbite_tables", JSON.stringify(updated));
-    }, 100);
   };
 
-  // Derived stats
+  // ── STEP 3: Render nothing until mounted to avoid SSR/client mismatch ─────
+  if (!mounted) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "sans-serif", color: "#9A6046" }}>
+        Loading dashboard...
+      </div>
+    );
+  }
+
+  // Derived — only runs client-side after mount
   const openTables = Object.keys(tables);
   const totalNewOrders = Object.values(tables).reduce(
     (s, t) => s + t.orders.filter(b => b.status === "new").length, 0
   );
   const totalRevenue = Object.values(tables).reduce((s, t) => s + calcSubtotal(t.orders), 0);
-
   const selectedTableData = selectedTable ? tables[selectedTable] : null;
 
   return (
@@ -213,7 +218,6 @@ function DashboardPage() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* New orders alert */}
           {totalNewOrders > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#FEF3C7", border: "1.5px solid #F59E0B", borderRadius: 20, padding: "6px 14px" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B", display: "inline-block", animation: "pulse-dot 1.2s infinite" }} />
@@ -222,8 +226,6 @@ function DashboardPage() {
               </span>
             </div>
           )}
-
-          {/* Stats pills */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ background: "#FFF7ED", border: "1px solid #FDE8D8", borderRadius: 20, padding: "5px 14px", fontSize: 13, color: "#9A6046", fontWeight: 500 }}>
               <span style={{ fontFamily: "Syne", fontWeight: 700, color: "#EA580C" }}>{openTables.length}</span> open table{openTables.length !== 1 ? "s" : ""}
@@ -232,11 +234,7 @@ function DashboardPage() {
               Revenue <span style={{ fontFamily: "Syne", fontWeight: 700, color: "#EA580C" }}>${totalRevenue.toFixed(2)}</span>
             </div>
           </div>
-
-          <a
-            href="/menu"
-            style={{ background: "linear-gradient(135deg,#F97316,#EA580C)", color: "#fff", border: "none", padding: "8px 18px", borderRadius: 20, fontFamily: "Syne", fontWeight: 700, fontSize: 13, cursor: "pointer", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}
-          >
+          <a href="/menu" style={{ background: "linear-gradient(135deg,#F97316,#EA580C)", color: "#fff", border: "none", padding: "8px 18px", borderRadius: 20, fontFamily: "Syne", fontWeight: 700, fontSize: 13, cursor: "pointer", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
             ← Menu
           </a>
         </div>
@@ -247,24 +245,19 @@ function DashboardPage() {
 
         {/* LEFT: All tables grid */}
         <div>
-          {/* Section label */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
             <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#9A6046", fontWeight: 600 }}>All Tables</div>
             <div style={{ display: "flex", gap: 8, fontSize: 12 }}>
-              {Object.entries(STATUS_COLORS).map(([s, c]) => {
-                const status = s as OrderStatus;
-                return (
-                  <div key={status} style={{ display: "flex", alignItems: "center", gap: 5, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 20, padding: "3px 10px", color: c.text, fontWeight: 600 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot, display: "inline-block" }} />
-                    {STATUS_LABELS[status]}
-                  </div>
-                );
-              })}
+              {(Object.entries(STATUS_COLORS) as [OrderStatus, typeof STATUS_COLORS[OrderStatus]][]).map(([s, c]) => (
+                <div key={s} style={{ display: "flex", alignItems: "center", gap: 5, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 20, padding: "3px 10px", color: c.text, fontWeight: 600 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot, display: "inline-block" }} />
+                  {STATUS_LABELS[s]}
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Table grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
             {TABLES.map((tName) => {
               const tData = tables[tName];
               const isOpen = !!tData;
@@ -284,25 +277,22 @@ function DashboardPage() {
                     if (newCount > 0) clearBadge(tName);
                   }}
                   style={{
-                    background: "#fff",
-                    borderRadius: 16,
+                    background: "#fff", borderRadius: 16, padding: "1.1rem 1.25rem", position: "relative",
                     border: isSelected ? "2px solid #F97316" : isOpen ? "1.5px solid #FDE8D8" : "1.5px solid #F3D5BE",
-                    padding: "1.1rem 1.25rem",
-                    position: "relative",
                     boxShadow: isSelected ? "0 0 0 3px rgba(249,115,22,0.15)" : isOpen ? "0 4px 16px rgba(249,115,22,0.08)" : "none",
                     opacity: isOpen ? 1 : 0.5,
                   }}
                 >
-                  {/* New order badge */}
+                  {/* Red badge for new batches */}
                   {newCount > 0 && (
                     <div style={{ position: "absolute", top: -8, right: -8, background: "#EF4444", color: "#fff", borderRadius: "50%", width: 22, height: 22, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Syne", boxShadow: "0 2px 8px rgba(239,68,68,0.4)", animation: "badge-pop .3s ease", zIndex: 2 }}>
                       {newCount}
                     </div>
                   )}
 
-                  {/* Pulsing dot for NEW status */}
+                  {/* Pulsing amber dot for new status */}
                   {hasNew && (
-                    <div style={{ position: "absolute", top: 14, right: 14 }}>
+                    <div style={{ position: "absolute", top: 14, right: newCount > 0 ? 30 : 14 }}>
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#F59E0B", display: "inline-block", animation: "pulse-dot 1.2s infinite" }} />
                     </div>
                   )}
@@ -323,7 +313,6 @@ function DashboardPage() {
                     )}
                   </div>
 
-                  {/* Batch status pills */}
                   {isOpen && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
                       {tData.orders.map((batch, bi) => {
@@ -338,7 +327,6 @@ function DashboardPage() {
                     </div>
                   )}
 
-                  {/* Footer */}
                   {isOpen && (
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid #FDE8D8" }}>
                       <div style={{ fontSize: 11, color: "#9A6046" }}>
@@ -364,7 +352,6 @@ function DashboardPage() {
           <div style={{ animation: "slide-in .25s ease" }}>
             <div style={{ background: "#fff", borderRadius: 18, border: "1.5px solid #F3D5BE", overflow: "hidden", position: "sticky", top: 80, boxShadow: "0 8px 32px rgba(249,115,22,0.10)" }}>
 
-              {/* Panel header */}
               <div style={{ background: "linear-gradient(135deg,#F97316,#EA580C)", padding: "1.1rem 1.5rem", color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontFamily: "Syne", fontWeight: 800, fontSize: "1.1rem" }}>{selectedTable}</div>
@@ -372,15 +359,11 @@ function DashboardPage() {
                     {selectedTableData.orders.length} batch{selectedTableData.orders.length !== 1 ? "es" : ""} · ${calcSubtotal(selectedTableData.orders).toFixed(2)} subtotal
                   </div>
                 </div>
-                <button
-                  onClick={() => setSelectedTable(null)}
-                  style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontFamily: "Syne", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}
-                >
+                <button onClick={() => setSelectedTable(null)} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontFamily: "Syne", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   ×
                 </button>
               </div>
 
-              {/* Orders list */}
               <div style={{ padding: "1rem 1.5rem", maxHeight: "calc(100vh - 320px)", overflowY: "auto" }}>
                 {selectedTableData.orders.map((batch, bi) => {
                   const sc = STATUS_COLORS[batch.status];
@@ -388,13 +371,10 @@ function DashboardPage() {
                   return (
                     <div key={batch.batchId} style={{ marginBottom: "1rem", borderRadius: 14, border: `1.5px solid ${sc.border}`, overflow: "hidden" }}>
 
-                      {/* Batch header */}
                       <div style={{ background: sc.bg, padding: "9px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ width: 8, height: 8, borderRadius: "50%", background: sc.dot, display: "inline-block", animation: batch.status === "new" ? "pulse-dot 1.2s infinite" : "none" }} />
-                          <span style={{ fontFamily: "Syne", fontWeight: 700, fontSize: 13, color: sc.text }}>
-                            Batch #{bi + 1}
-                          </span>
+                          <span style={{ fontFamily: "Syne", fontWeight: 700, fontSize: 13, color: sc.text }}>Batch #{bi + 1}</span>
                           <span style={{ background: sc.border, color: "#fff", borderRadius: 20, fontSize: 10, padding: "2px 8px", fontWeight: 700 }}>
                             {STATUS_LABELS[batch.status]}
                           </span>
@@ -402,7 +382,6 @@ function DashboardPage() {
                         <div style={{ fontSize: 11, color: sc.text, fontWeight: 500 }}>{batch.time}</div>
                       </div>
 
-                      {/* Items */}
                       <div style={{ padding: "8px 14px" }}>
                         {batch.items.map((item) => (
                           <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px dashed #FDE8D8" }}>
@@ -423,33 +402,28 @@ function DashboardPage() {
                         </div>
                       </div>
 
-                      {/* Status buttons */}
                       <div style={{ padding: "8px 14px 12px", display: "flex", gap: 6 }}>
-                        {Object.entries(STATUS_LABELS).map(([s, label]) => {
-                          const status = s as OrderStatus;
-                          return (
-                            <button
-                              key={status}
-                              className="status-btn"
-                              onClick={() => updateBatchStatus(selectedTable, batch.batchId, status)}
-                              style={{
-                                flex: 1, padding: "6px 4px", borderRadius: 8, fontSize: 11, fontWeight: 700, fontFamily: "Syne", cursor: "pointer",
-                                background: batch.status === status ? STATUS_COLORS[status].border : "#fff",
-                                color: batch.status === status ? "#fff" : STATUS_COLORS[status].text,
-                                border: `1.5px solid ${STATUS_COLORS[status].border}`,
-                              }}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
+                        {(Object.entries(STATUS_LABELS) as [OrderStatus, string][]).map(([s, label]) => (
+                          <button
+                            key={s}
+                            className="status-btn"
+                            onClick={() => updateBatchStatus(selectedTable, batch.batchId, s)}
+                            style={{
+                              flex: 1, padding: "6px 4px", borderRadius: 8, fontSize: 11, fontWeight: 700, fontFamily: "Syne", cursor: "pointer",
+                              background: batch.status === s ? STATUS_COLORS[s].border : "#fff",
+                              color: batch.status === s ? "#fff" : STATUS_COLORS[s].text,
+                              border: `1.5px solid ${STATUS_COLORS[s].border}`,
+                            }}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Totals + Bill Out */}
               <div style={{ padding: "1rem 1.5rem 1.5rem", borderTop: "1px solid #FDE8D8" }}>
                 <div style={{ background: "#FFFBF5", borderRadius: 12, padding: "0.9rem 1rem", marginBottom: "0.9rem" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#9A6046", marginBottom: 6 }}>
@@ -465,7 +439,6 @@ function DashboardPage() {
                     <span style={{ color: "#EA580C" }}>${(calcSubtotal(selectedTableData.orders) * (1 + TAX_RATE)).toFixed(2)}</span>
                   </div>
                 </div>
-
                 <button
                   onClick={() => billOutTable(selectedTable)}
                   style={{ width: "100%", background: "linear-gradient(135deg,#1C0A00,#3D1200)", color: "#FED7AA", border: "none", padding: "13px", borderRadius: 12, fontFamily: "Syne", fontWeight: 700, fontSize: 14, cursor: "pointer", letterSpacing: "0.4px" }}
@@ -480,12 +453,11 @@ function DashboardPage() {
 
       </div>
 
-      {/* Empty state */}
       {openTables.length === 0 && (
         <div style={{ textAlign: "center", padding: "5rem 2rem", color: "#C4A18A" }}>
           <div style={{ fontSize: "4rem", marginBottom: "1rem", opacity: 0.4 }}>🍽️</div>
           <div style={{ fontFamily: "Syne", fontWeight: 700, fontSize: "1.25rem", marginBottom: 8 }}>No open tables</div>
-          <div style={{ fontSize: 14 }}>All tables are currently clear. Orders will appear here when placed from the menu.</div>
+          <div style={{ fontSize: 14 }}>All tables are clear. Orders will appear here when placed from the menu.</div>
         </div>
       )}
     </>
